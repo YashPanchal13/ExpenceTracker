@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Reports — FinTrack Pro{% endblock %}
+{% block page_name %}Reports{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="page-title">Reports & Analytics</h1>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-outline btn-sm" id="tab-weekly" onclick="showTab('weekly')">Weekly</button>
+    <button class="btn btn-gold btn-sm" id="tab-monthly" onclick="showTab('monthly')">Monthly</button>
+  </div>
+</div>
+
+<!-- Monthly Report -->
+<div id="monthly-view">
+  <div id="monthly-cards" class="grid-3 mb-6"></div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="section-title">Monthly Net Flow</div>
+      <canvas id="monthlyChart" height="220"></canvas>
+    </div>
+    <div class="card">
+      <div class="section-title">Category Breakdown</div>
+      <div id="monthly-cats" style="max-height:280px;overflow-y:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Weekly Report -->
+<div id="weekly-view" style="display:none">
+  <div id="weekly-cards" class="grid-4 mb-6"></div>
+  <div class="card">
+    <div class="section-title">Weekly Income vs Expenses</div>
+    <canvas id="weeklyChart" height="200"></canvas>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const fmt = n => '₹' + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:0});
+let monthlyChart, weeklyChart;
+let activeTab = 'monthly';
+
+function showTab(t) {
+  activeTab = t;
+  document.getElementById('monthly-view').style.display = t==='monthly'?'':'none';
+  document.getElementById('weekly-view').style.display = t==='weekly'?'':'none';
+  document.getElementById('tab-monthly').className = 'btn btn-sm ' + (t==='monthly'?'btn-gold':'btn-outline');
+  document.getElementById('tab-weekly').className = 'btn btn-sm ' + (t==='weekly'?'btn-gold':'btn-outline');
+}
+
+async function loadMonthly() {
+  const r = await fetch('/api/report/monthly');
+  const data = await r.json();
+  
+  // Cards — last 6 months
+  const cards = document.getElementById('monthly-cards');
+  cards.innerHTML = data.map(m => {
+    const net = m.income - m.expense;
+    return `<div class="stat-card ${net>=0?'green':'red'}">
+      <div class="stat-label">${m.label}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px">
+        <div><div style="font-size:11px;color:var(--text3)">Income</div><div style="color:var(--green);font-weight:600;font-size:16px">${fmt(m.income)}</div></div>
+        <div><div style="font-size:11px;color:var(--text3)">Expense</div><div style="color:var(--red);font-weight:600;font-size:16px">${fmt(m.expense)}</div></div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between">
+        <span style="font-size:11px;color:var(--text3)">Net</span>
+        <span style="font-size:14px;font-weight:700;color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}${fmt(net)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px">
+        <span style="font-size:11px;color:var(--text3)">Opening: ${fmt(m.opening)}</span>
+        <span style="font-size:11px;color:var(--text3)">Closing: ${fmt(m.closing)}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Chart
+  const ctx = document.getElementById('monthlyChart').getContext('2d');
+  if (monthlyChart) monthlyChart.destroy();
+  monthlyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(m=>m.label),
+      datasets: [
+        {label:'Income', data:data.map(m=>m.income), borderColor:'#22d3a0', backgroundColor:'rgba(34,211,160,0.1)', tension:0.4, fill:true, pointBackgroundColor:'#22d3a0'},
+        {label:'Expense', data:data.map(m=>m.expense), borderColor:'#f0534a', backgroundColor:'rgba(240,83,74,0.1)', tension:0.4, fill:true, pointBackgroundColor:'#f0534a'},
+        {label:'Closing Balance', data:data.map(m=>m.closing), borderColor:'#f0c040', backgroundColor:'transparent', tension:0.4, borderDash:[5,5], pointBackgroundColor:'#f0c040'}
+      ]
+    },
+    options: {
+      responsive:true,
+      plugins:{legend:{labels:{color:'#9098b0',font:{family:'DM Sans'}}}},
+      scales:{x:{ticks:{color:'#606880'},grid:{color:'rgba(255,255,255,0.04)'}},
+              y:{ticks:{color:'#606880',callback:v=>'₹'+v.toLocaleString('en-IN')},grid:{color:'rgba(255,255,255,0.04)'}}}
+    }
+  });
+
+  // Category breakdown for latest month
+  const latest = data[data.length-1];
+  const catDiv = document.getElementById('monthly-cats');
+  const cats = Object.entries(latest.categories).sort((a,b)=>b[1]-a[1]);
+  const total = cats.reduce((s,c)=>s+c[1], 0);
+  const colors = ['#f0c040','#5b8af0','#22d3a0','#f0534a','#c080f0','#f09040','#40c0f0'];
+  if (!cats.length) { catDiv.innerHTML = '<p style="color:var(--text3);text-align:center;padding:24px">No expenses for '+latest.label+'</p>'; return; }
+  catDiv.innerHTML = `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">${latest.label}</div>` +
+    cats.map(([cat, amt], i) => {
+      const pct = total ? Math.round(amt/total*100) : 0;
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:13px;display:flex;align-items:center;gap:6px">
+            <span class="dot" style="background:${colors[i%colors.length]}"></span>${cat||'Other'}
+          </span>
+          <span style="font-size:13px;font-weight:600">${fmt(amt)} <span style="color:var(--text3);font-weight:400">(${pct}%)</span></span>
+        </div>
+        <div style="background:var(--bg3);border-radius:4px;height:6px">
+          <div style="background:${colors[i%colors.length]};width:${pct}%;height:6px;border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>`;
+    }).join('');
+}
+
+async function loadWeekly() {
+  const r = await fetch('/api/report/weekly');
+  const data = await r.json();
+  
+  const cards = document.getElementById('weekly-cards');
+  cards.innerHTML = data.map(w => {
+    const net = w.income - w.expense;
+    return `<div class="stat-card ${net>=0?'green':'red'}">
+      <div class="stat-label" style="font-size:10px">${w.label}</div>
+      <div style="margin-top:8px">
+        <div style="color:var(--green);font-size:15px;font-weight:600">${fmt(w.income)}</div>
+        <div style="color:var(--text3);font-size:11px;margin-bottom:4px">income</div>
+        <div style="color:var(--red);font-size:15px;font-weight:600">${fmt(w.expense)}</div>
+        <div style="color:var(--text3);font-size:11px">expenses</div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:700;color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}${fmt(net)}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const ctx = document.getElementById('weeklyChart').getContext('2d');
+  if (weeklyChart) weeklyChart.destroy();
+  weeklyChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(w=>w.label),
+      datasets: [
+        {label:'Income', data:data.map(w=>w.income), backgroundColor:'rgba(34,211,160,0.7)', borderRadius:8},
+        {label:'Expense', data:data.map(w=>w.expense), backgroundColor:'rgba(240,83,74,0.7)', borderRadius:8}
+      ]
+    },
+    options: {
+      responsive:true,
+      plugins:{legend:{labels:{color:'#9098b0',font:{family:'DM Sans'}}}},
+      scales:{x:{ticks:{color:'#606880'},grid:{color:'rgba(255,255,255,0.04)'}},
+              y:{ticks:{color:'#606880',callback:v=>'₹'+v.toLocaleString('en-IN')},grid:{color:'rgba(255,255,255,0.04)'}}}
+    }
+  });
+}
+
+loadMonthly();
+loadWeekly();
+</script>
+{% endblock %}

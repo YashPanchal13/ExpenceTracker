@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — FinTrack Pro{% endblock %}
+{% block page_name %}Dashboard{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="page-title">Financial Overview</h1>
+    <p style="color:var(--text3);font-size:13px;margin-top:4px" id="month-label"></p>
+  </div>
+  <button class="btn btn-outline btn-sm" onclick="openBalanceModal()">⊕ Set Opening Balance</button>
+</div>
+
+<div class="grid-4 mb-6" id="stat-cards">
+  <div class="stat-card gold"><div class="stat-icon">◈</div><div class="stat-label">Opening Balance</div><div class="stat-value text-gold" id="s-opening">—</div><div class="stat-sub">Month start</div></div>
+  <div class="stat-card green"><div class="stat-icon">↑</div><div class="stat-label">Total Income</div><div class="stat-value text-green" id="s-income">—</div><div class="stat-sub">This month</div></div>
+  <div class="stat-card red"><div class="stat-icon">↓</div><div class="stat-label">Total Expenses</div><div class="stat-value text-red" id="s-expense">—</div><div class="stat-sub">This month</div></div>
+  <div class="stat-card blue"><div class="stat-icon">⬡</div><div class="stat-label">Closing Balance</div><div class="stat-value" id="s-closing" style="color:var(--blue)">—</div><div class="stat-sub">Current balance</div></div>
+</div>
+
+<div class="grid-2 mt-4">
+  <div class="card">
+    <div class="section-title">Income vs Expenses Trend</div>
+    <canvas id="trendChart" height="200"></canvas>
+  </div>
+  <div class="card">
+    <div class="section-title">Expense Categories</div>
+    <canvas id="catChart" height="200"></canvas>
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="flex items-center justify-between mb-4">
+    <div class="section-title" style="margin-bottom:0">Recent Transactions</div>
+    <a href="/transactions" class="btn btn-outline btn-sm">View All →</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th>Amount</th></tr></thead>
+      <tbody id="recent-tbody"><tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Opening Balance Modal -->
+<div class="modal-overlay" id="balanceModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Set Opening Balance</div>
+      <button class="btn btn-outline btn-icon btn-sm" onclick="closeBalanceModal()">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Month Opening Balance (₹)</label>
+      <input type="number" class="form-control" id="bal-input" placeholder="e.g. 25000" step="0.01">
+      <div class="tooltip">Enter how much money you had at the start of this month</div>
+    </div>
+    <button class="btn btn-gold w-full" onclick="saveBalance()">Save Balance</button>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const fmt = n => '₹' + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:0});
+let trendChart, catChart;
+
+async function loadDashboard() {
+  const r = await fetch('/api/dashboard-data');
+  const d = await r.json();
+  document.getElementById('month-label').textContent = d.month_name;
+  document.getElementById('s-opening').textContent = fmt(d.opening_balance);
+  document.getElementById('s-income').textContent = fmt(d.income);
+  document.getElementById('s-expense').textContent = fmt(d.expenses);
+  const cl = document.getElementById('s-closing');
+  cl.textContent = fmt(d.closing_balance);
+  cl.style.color = d.closing_balance >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // Recent table
+  const tbody = document.getElementById('recent-tbody');
+  if (!d.recent.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px">No transactions yet</td></tr>'; return; }
+  tbody.innerHTML = d.recent.map(t => `
+    <tr>
+      <td style="color:var(--text3)">${t.date}</td>
+      <td>${t.description}</td>
+      <td><span style="color:var(--text2);font-size:12px">${t.category||'—'}</span></td>
+      <td><span class="badge badge-${t.type}">${t.type}</span></td>
+      <td class="${t.type==='income'?'amount-pos':'amount-neg'}">${t.type==='income'?'+':'−'}${fmt(t.amount)}</td>
+    </tr>`).join('');
+
+  // Trend chart
+  const tCtx = document.getElementById('trendChart').getContext('2d');
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(tCtx, {
+    type: 'bar',
+    data: {
+      labels: d.trend.map(t=>t.month),
+      datasets: [
+        {label:'Income', data:d.trend.map(t=>t.income), backgroundColor:'rgba(34,211,160,0.6)', borderRadius:6},
+        {label:'Expense', data:d.trend.map(t=>t.expense), backgroundColor:'rgba(240,83,74,0.6)', borderRadius:6}
+      ]
+    },
+    options: {
+      responsive:true, plugins:{legend:{labels:{color:'#9098b0',font:{family:'DM Sans'}}}},
+      scales:{x:{ticks:{color:'#606880'},grid:{color:'rgba(255,255,255,0.04)'}},
+              y:{ticks:{color:'#606880',callback:v=>'₹'+v.toLocaleString('en-IN')},grid:{color:'rgba(255,255,255,0.04)'}}}
+    }
+  });
+
+  // Category donut
+  const cCtx = document.getElementById('catChart').getContext('2d');
+  if (catChart) catChart.destroy();
+  const colors = ['#f0c040','#5b8af0','#22d3a0','#f0534a','#c080f0','#f09040','#40c0f0'];
+  catChart = new Chart(cCtx, {
+    type: 'doughnut',
+    data: {
+      labels: d.categories.length ? d.categories.map(c=>c.category||'Other') : ['No Data'],
+      datasets: [{data: d.categories.length ? d.categories.map(c=>c.total) : [1],
+        backgroundColor: d.categories.length ? colors.slice(0,d.categories.length) : ['#2a2d3e'],
+        borderWidth:0, hoverOffset:6}]
+    },
+    options:{responsive:true,cutout:'65%',
+      plugins:{legend:{position:'right',labels:{color:'#9098b0',font:{family:'DM Sans'},padding:12,boxWidth:12}}}}
+  });
+}
+
+function openBalanceModal() { document.getElementById('balanceModal').classList.add('open'); }
+function closeBalanceModal() { document.getElementById('balanceModal').classList.remove('open'); }
+
+async function saveBalance() {
+  const balance = parseFloat(document.getElementById('bal-input').value);
+  if (isNaN(balance)) { alert('Enter a valid amount'); return; }
+  const today = new Date();
+  await fetch('/api/opening-balance', {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({balance, year:today.getFullYear(), month:today.getMonth()+1})});
+  closeBalanceModal();
+  loadDashboard();
+}
+
+document.getElementById('balanceModal').addEventListener('click', e => { if(e.target===e.currentTarget) closeBalanceModal(); });
+loadDashboard();
+</script>
+{% endblock %}

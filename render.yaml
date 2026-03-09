@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fintrack-pro
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/expense_tracker.db
+    disk:
+      name: fintrack-data
+      mountPath: /var/data
+      sizeGB: 1

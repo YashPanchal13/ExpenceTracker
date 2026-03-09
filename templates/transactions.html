@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Transactions — FinTrack Pro{% endblock %}
+{% block page_name %}Transactions{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="page-title">Transactions</h1>
+  <button class="btn btn-gold" onclick="openModal()">＋ Add Transaction</button>
+</div>
+
+<!-- Filters -->
+<div class="card card-sm mb-4">
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <select class="form-control" id="filter-type" style="width:150px" onchange="loadTxns()">
+      <option value="">All Types</option>
+      <option value="income">Income</option>
+      <option value="expense">Expense</option>
+    </select>
+    <input type="month" class="form-control" id="filter-month" style="width:180px" onchange="loadTxns()">
+    <button class="btn btn-outline btn-sm" onclick="clearFilters()">✕ Clear</button>
+    <div style="margin-left:auto;color:var(--text3);font-size:13px" id="count-info"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th>Amount</th><th></th></tr></thead>
+      <tbody id="txn-tbody"><tr><td colspan="6" style="text-align:center;color:var(--text3);padding:32px">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="flex items-center justify-between mt-4" id="pagination" style="display:none!important"></div>
+</div>
+
+<!-- Add Transaction Modal -->
+<div class="modal-overlay" id="txnModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add Transaction</div>
+      <button class="btn btn-outline btn-icon btn-sm" onclick="closeModal()">✕</button>
+    </div>
+    <div class="type-toggle mb-4" id="type-toggle">
+      <button class="type-btn active-expense" id="btn-expense" onclick="setType('expense')">↓ Expense</button>
+      <button class="type-btn" id="btn-income" onclick="setType('income')">↑ Income</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <input type="text" class="form-control" id="txn-desc" placeholder="What was this for?">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Amount (₹)</label>
+        <input type="number" class="form-control" id="txn-amount" placeholder="0.00" step="0.01" min="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date</label>
+        <input type="date" class="form-control" id="txn-date">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <select class="form-control" id="txn-category">
+        <option value="">Select category…</option>
+        <optgroup label="Expenses">
+          <option>Food & Dining</option><option>Groceries</option><option>Transport</option>
+          <option>Shopping</option><option>Entertainment</option><option>Healthcare</option>
+          <option>Utilities</option><option>Rent</option><option>Education</option>
+          <option>Personal Care</option><option>Travel</option><option>Other</option>
+        </optgroup>
+        <optgroup label="Income">
+          <option>Salary</option><option>Freelance</option><option>Business</option>
+          <option>Investment</option><option>Gift</option><option>Refund</option>
+        </optgroup>
+      </select>
+    </div>
+    <button class="btn btn-gold w-full" onclick="saveTxn()">Save Transaction</button>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const fmt = n => '₹' + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:0});
+let currentType = 'expense';
+let currentPage = 1;
+
+// Set today's date
+document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
+
+function setType(t) {
+  currentType = t;
+  document.getElementById('btn-expense').className = 'type-btn' + (t==='expense'?' active-expense':'');
+  document.getElementById('btn-income').className = 'type-btn' + (t==='income'?' active-income':'');
+}
+
+function openModal() { document.getElementById('txnModal').classList.add('open'); }
+function closeModal() { document.getElementById('txnModal').classList.remove('open'); }
+document.getElementById('txnModal').addEventListener('click', e => { if(e.target===e.currentTarget) closeModal(); });
+
+async function saveTxn() {
+  const desc = document.getElementById('txn-desc').value.trim();
+  const amount = parseFloat(document.getElementById('txn-amount').value);
+  const date = document.getElementById('txn-date').value;
+  const category = document.getElementById('txn-category').value;
+  if (!desc || !amount || amount<=0 || !date) { alert('Please fill all required fields'); return; }
+  const r = await fetch('/api/transactions', {method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({type:currentType, description:desc, amount, date, category})});
+  const d = await r.json();
+  if (d.success) {
+    closeModal();
+    document.getElementById('txn-desc').value='';
+    document.getElementById('txn-amount').value='';
+    document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('txn-category').value='';
+    loadTxns();
+  }
+}
+
+async function loadTxns(page=1) {
+  currentPage = page;
+  const type = document.getElementById('filter-type').value;
+  const month = document.getElementById('filter-month').value;
+  const params = new URLSearchParams({page, type, month});
+  const r = await fetch('/api/transactions?' + params);
+  const d = await r.json();
+  
+  const tbody = document.getElementById('txn-tbody');
+  document.getElementById('count-info').textContent = `${d.total} transaction${d.total!==1?'s':''}`;
+  
+  if (!d.transactions.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:32px">No transactions found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = d.transactions.map(t => `
+    <tr>
+      <td style="color:var(--text3);font-size:13px">${t.date}</td>
+      <td>${t.description}</td>
+      <td><span style="color:var(--text2);font-size:12px;background:var(--bg3);padding:2px 8px;border-radius:4px">${t.category||'—'}</span></td>
+      <td><span class="badge badge-${t.type}">${t.type}</span></td>
+      <td class="${t.type==='income'?'amount-pos':'amount-neg'}" style="font-weight:600">${t.type==='income'?'+':'−'}${fmt(t.amount)}</td>
+      <td><button class="btn btn-red btn-icon btn-sm" onclick="deleteTxn(${t.id})" title="Delete">✕</button></td>
+    </tr>`).join('');
+
+  // Pagination
+  const totalPages = Math.ceil(d.total / d.per_page);
+  const pag = document.getElementById('pagination');
+  if (totalPages > 1) {
+    pag.style.display = 'flex';
+    pag.innerHTML = `
+      <button class="btn btn-outline btn-sm" onclick="loadTxns(${page-1})" ${page<=1?'disabled':''}>← Prev</button>
+      <span style="color:var(--text3);font-size:13px">Page ${page} of ${totalPages}</span>
+      <button class="btn btn-outline btn-sm" onclick="loadTxns(${page+1})" ${page>=totalPages?'disabled':''}>Next →</button>`;
+  } else { pag.style.display = 'none'; }
+}
+
+async function deleteTxn(id) {
+  if (!confirm('Delete this transaction?')) return;
+  await fetch('/api/transactions/' + id, {method:'DELETE'});
+  loadTxns(currentPage);
+}
+
+function clearFilters() {
+  document.getElementById('filter-type').value='';
+  document.getElementById('filter-month').value='';
+  loadTxns();
+}
+
+loadTxns();
+</script>
+{% endblock %}
